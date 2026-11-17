@@ -33,7 +33,7 @@ def build_router(quotes: Quotes) -> Router:
             raise HttpError(409, str(exc)) from exc
         except QuotesUnavailable as exc:
             raise HttpError(502, "quotes is unavailable") from exc
-        log.info("invoice line created for %s", quote_id)
+        log.info("invoice line created: quote=%s monthly=%s", quote_id, line.monthly_amount)
         return json_response(201, line.to_dict())
 
     return router
