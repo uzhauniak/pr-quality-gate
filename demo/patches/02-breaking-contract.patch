@@ -1,0 +1,45 @@
+Subject: pricing: rename unit_rate to unit_rate_pence to make the unit explicit
+
+diff --git a/services/pricing/openapi.yaml b/services/pricing/openapi.yaml
+index 0f12bc6..9625493 100644
+--- a/services/pricing/openapi.yaml
++++ b/services/pricing/openapi.yaml
+@@ -44,10 +44,10 @@ components:
+     Price:
+       type: object
+       additionalProperties: false
+-      required: [tariff_code, unit_rate, standing_charge, annual_cost, currency]
++      required: [tariff_code, unit_rate_pence, standing_charge, annual_cost, currency]
+       properties:
+         tariff_code: { type: string }
+-        unit_rate: { type: number, description: "pence per kWh" }
++        unit_rate_pence: { type: number, description: "pence per kWh" }
+         standing_charge: { type: number, description: "pence per day" }
+         annual_cost: { type: number, description: "pounds per year" }
+         currency: { type: string, const: GBP }
+diff --git a/services/pricing/src/pricing/engine.py b/services/pricing/src/pricing/engine.py
+index 5f37b68..cd8c86b 100644
+--- a/services/pricing/src/pricing/engine.py
++++ b/services/pricing/src/pricing/engine.py
+@@ -55,7 +55,7 @@ class PriceBreakdown:
+     def to_dict(self) -> dict[str, object]:
+         return {
+             "tariff_code": self.tariff_code,
+-            "unit_rate": float(self.unit_rate),
++            "unit_rate_pence": float(self.unit_rate),
+             "standing_charge": float(self.standing_charge),
+             "annual_cost": float(self.annual_cost),
+             "currency": self.currency,
+diff --git a/services/pricing/tests/integration/test_handler.py b/services/pricing/tests/integration/test_handler.py
+index 3833b58..d47648f 100644
+--- a/services/pricing/tests/integration/test_handler.py
++++ b/services/pricing/tests/integration/test_handler.py
+@@ -24,7 +24,7 @@ def test_prices_a_valid_request():
+ 
+     assert response["statusCode"] == 200
+     body = json.loads(response["body"])
+-    assert body["unit_rate"] == 24.5
++    assert body["unit_rate_pence"] == 24.5
+     assert body["annual_cost"] == 5100.75
+ 
+ 

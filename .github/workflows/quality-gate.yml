@@ -1,0 +1,112 @@
+name: quality-gate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: quality-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  plan:
+    name: plan (select tests)
+    runs-on: ubuntu-latest
+    outputs:
+      services: ${{ steps.select.outputs.services }}
+      contracts: ${{ steps.select.outputs.contracts }}
+      run_full: ${{ steps.select.outputs.run_full }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # need the merge base to diff against
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - name: Lint
+        run: ruff check . && ruff format --check .
+      - name: Test the selector itself
+        run: pytest quality/tests
+      - name: Select tests
+        id: select
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            python quality/select_tests.py --base "origin/${{ github.base_ref }}" --github
+          else
+            python quality/select_tests.py --full --github
+          fi
+
+  test:
+    name: test (${{ matrix.service }})
+    needs: plan
+    if: needs.plan.outputs.services != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJson(needs.plan.outputs.services) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - name: Unit + integration tests
+        run: pytest services/${{ matrix.service }}
+
+  contracts:
+    name: contracts (pact)
+    needs: plan
+    if: needs.plan.outputs.contracts != '[]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - name: Consumer tests → provider verification
+        run: python quality/run_contracts.py --pairs '${{ needs.plan.outputs.contracts }}'
+      - name: Keep generated pacts for inspection
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pacts
+          path: pacts/*.json
+          if-no-files-found: ignore
+
+  # Single required status check for branch protection. Skipped jobs are fine
+  # (the plan decided they weren't needed); failed or cancelled jobs are not.
+  gate:
+    name: quality-gate
+    needs: [plan, test, contracts]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Evaluate
+        run: |
+          echo "plan=${{ needs.plan.result }} test=${{ needs.test.result }} contracts=${{ needs.contracts.result }}"
+          for result in "${{ needs.plan.result }}" "${{ needs.test.result }}" "${{ needs.contracts.result }}"; do
+            if [ "$result" != "success" ] && [ "$result" != "skipped" ]; then
+              echo "::error::quality gate failed"
+              exit 1
+            fi
+          done
+          if [ "${{ needs.plan.result }}" != "success" ]; then
+            echo "::error::plan did not run"
+            exit 1
+          fi

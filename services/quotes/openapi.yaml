@@ -1,0 +1,87 @@
+openapi: 3.1.0
+info:
+  title: Quotes API
+  version: 1.0.0
+  description: Creates priced quotes for business customers and records acceptance.
+paths:
+  /quotes:
+    post:
+      operationId: createQuote
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [customer_id, annual_kwh, tariff_code, region]
+              properties:
+                customer_id: { type: string }
+                annual_kwh: { type: number }
+                tariff_code: { type: string }
+                region: { type: string }
+      responses:
+        "201":
+          description: Quote created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Quote" }
+        "400": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        "502": { $ref: "#/components/responses/Error" }
+  /quotes/{quote_id}:
+    get:
+      operationId: getQuote
+      parameters:
+        - { name: quote_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The quote
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Quote" }
+        "404": { $ref: "#/components/responses/Error" }
+  /quotes/{quote_id}/accept:
+    post:
+      operationId: acceptQuote
+      parameters:
+        - { name: quote_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Quote accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Quote" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+components:
+  responses:
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [error]
+            properties:
+              error: { type: string }
+  schemas:
+    Quote:
+      type: object
+      additionalProperties: false
+      required: [id, customer_id, status, tariff_code, annual_kwh, price, valid_until]
+      properties:
+        id: { type: string }
+        customer_id: { type: string }
+        status: { type: string, enum: [PENDING, ACCEPTED] }
+        tariff_code: { type: string }
+        annual_kwh: { type: number }
+        valid_until: { type: string, format: date-time }
+        price:
+          type: object
+          additionalProperties: false
+          required: [unit_rate, standing_charge, annual_cost, currency]
+          properties:
+            unit_rate: { type: number }
+            standing_charge: { type: number }
+            annual_cost: { type: number }
+            currency: { type: string }

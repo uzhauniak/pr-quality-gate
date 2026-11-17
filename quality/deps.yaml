@@ -1,0 +1,39 @@
+# Service dependency model used to select tests for a change.
+#
+# consumers: services that call this one over HTTP. A change to a provider re-tests its
+# direct consumers and re-verifies their pacts; a change to a consumer re-verifies the
+# pacts it publishes.
+#
+# Patterns use fnmatch syntax; `*` also matches `/`.
+
+services:
+  pricing:
+    paths: ["services/pricing/*"]
+    consumers: [quotes]
+  quotes:
+    paths: ["services/quotes/*"]
+    consumers: [billing]
+  billing:
+    paths: ["services/billing/*"]
+    consumers: []
+
+# A change here can affect every service: run the full suite.
+shared:
+  - "libs/*"
+  - "quality/*"
+  - "conftest.py"
+  - "pyproject.toml"
+  - "requirements*.txt"
+  - ".github/workflows/*"
+
+# Never affects runtime behaviour or tests.
+ignore:
+  - "*.md"
+  - "docs/*"
+  - "demo/*"
+  - "scripts/*"
+  - ".gitignore"
+  - ".gitattributes"
+  - "pacts/.gitkeep"
+
+# Anything not matched above is treated as unknown → full run (fail safe, never fail open).

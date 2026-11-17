@@ -1,0 +1,28 @@
+Subject: billing: clearer invoice line wording and log context
+
+diff --git a/services/billing/src/billing/handler.py b/services/billing/src/billing/handler.py
+index b6efccf..2c4343b 100644
+--- a/services/billing/src/billing/handler.py
++++ b/services/billing/src/billing/handler.py
+@@ -33,7 +33,7 @@ def build_router(quotes: Quotes) -> Router:
+             raise HttpError(409, str(exc)) from exc
+         except QuotesUnavailable as exc:
+             raise HttpError(502, "quotes is unavailable") from exc
+-        log.info("invoice line created for %s", quote_id)
++        log.info("invoice line created: quote=%s monthly=%s", quote_id, line.monthly_amount)
+         return json_response(201, line.to_dict())
+ 
+     return router
+diff --git a/services/billing/src/billing/invoicing.py b/services/billing/src/billing/invoicing.py
+index 4b345bb..f52de20 100644
+--- a/services/billing/src/billing/invoicing.py
++++ b/services/billing/src/billing/invoicing.py
+@@ -41,7 +41,7 @@ def build_invoice_line(quote: QuoteView) -> InvoiceLine:
+     return InvoiceLine(
+         quote_id=quote.id,
+         customer_id=quote.customer_id,
+-        description=f"Electricity supply (quote {quote.id}), monthly instalment",
++        description=f"Electricity supply, monthly instalment (quote {quote.id})",
+         monthly_amount=monthly,
+         currency=quote.currency,
+     )

@@ -1,0 +1,48 @@
+openapi: 3.1.0
+info:
+  title: Billing API
+  version: 1.0.0
+  description: Creates monthly invoice lines from accepted quotes.
+paths:
+  /invoice-lines:
+    post:
+      operationId: createInvoiceLine
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [quote_id]
+              properties:
+                quote_id: { type: string }
+      responses:
+        "201":
+          description: Invoice line created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [quote_id, customer_id, description, monthly_amount, currency]
+                properties:
+                  quote_id: { type: string }
+                  customer_id: { type: string }
+                  description: { type: string }
+                  monthly_amount: { type: number }
+                  currency: { type: string }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "502": { $ref: "#/components/responses/Error" }
+components:
+  responses:
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [error]
+            properties:
+              error: { type: string }

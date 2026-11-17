@@ -1,0 +1,58 @@
+openapi: 3.1.0
+info:
+  title: Pricing API
+  version: 1.0.0
+  description: Prices business electricity for a tariff, region and annual consumption.
+paths:
+  /prices/quote:
+    post:
+      operationId: priceQuote
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PriceRequest"
+      responses:
+        "200":
+          description: Price breakdown
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Price"
+        "400":
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: Request is well-formed but can't be priced
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+components:
+  schemas:
+    PriceRequest:
+      type: object
+      required: [annual_kwh, tariff_code, region]
+      properties:
+        annual_kwh: { type: number, exclusiveMinimum: 0 }
+        tariff_code: { type: string, enum: [FIXED-12M, FIXED-24M, FLEX] }
+        region: { type: string, enum: [LDN, NW, SCO] }
+    Price:
+      type: object
+      additionalProperties: false
+      required: [tariff_code, unit_rate, standing_charge, annual_cost, currency]
+      properties:
+        tariff_code: { type: string }
+        unit_rate: { type: number, description: "pence per kWh" }
+        standing_charge: { type: number, description: "pence per day" }
+        annual_cost: { type: number, description: "pounds per year" }
+        currency: { type: string, const: GBP }
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }

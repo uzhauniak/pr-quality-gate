@@ -1,0 +1,31 @@
+[project]
+name = "pr-quality-gate"
+version = "0.1.0"
+description = "Risk-aware CI quality gate for Python microservices: dependency-based test selection + consumer-driven contracts."
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+# Monorepo without packaging ceremony: each service's src/ and the shared libs are importable directly.
+pythonpath = [
+    "services/pricing/src",
+    "services/quotes/src",
+    "services/billing/src",
+    "libs",
+    ".",
+]
+# importlib mode lets several services have test files with the same name (test_handler.py, ...).
+addopts = "--import-mode=importlib -q"
+testpaths = ["services", "quality/tests"]
+markers = [
+    "contract: Pact consumer/provider tests; run in order via quality/run_contracts.py (needs --contracts)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["billing", "lambda_http", "pricing", "quality", "quotes", "testkit"]
