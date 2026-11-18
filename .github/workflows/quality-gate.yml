@@ -158,13 +158,25 @@ jobs:
             fi
           done
 
-  # Stand-in for a real deployment (phase 3: AWS SAM + canary). Recording it tells the
-  # broker what is live, which is what can-i-deploy checks pull requests against.
-  record-deployment:
-    name: record deployment (production)
+  # Deploy every green main build: can-i-deploy → SAM package/deploy with a CodeDeploy
+  # canary per function (auto-rollback on alarm) → smoke tests → record-deployment.
+  # Without AWS credentials the deploy is skipped and only the broker is updated.
+  deploy:
+    name: deploy (aws canary)
     needs: gate
-    if: github.event_name == 'push' && needs.gate.result == 'success'
+    # always(): the gate itself depends on jobs that are routinely skipped
+    if: always() && github.event_name == 'push' && needs.gate.result == 'success'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: ${{ vars.AWS_REGION }}
+      ARTIFACT_BUCKET: ${{ vars.AWS_ARTIFACT_BUCKET }}
+      STACK: pqg-services
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -173,4 +185,33 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-dev.txt
       - run: pip install -r requirements-dev.txt
-      - run: python quality/pact_broker.py record-deployment billing pricing quotes
+      - name: can-i-deploy → production
+        run: python quality/pact_broker.py can-i-deploy billing pricing quotes
+      - name: Deploy (canary 10% for 5 min, auto-rollback on alarm)
+        id: deploy
+        if: env.AWS_ACCESS_KEY_ID != ''
+        run: |
+          python infra/build.py
+          aws cloudformation package \
+            --template-file infra/template.yaml \
+            --s3-bucket "$ARTIFACT_BUCKET" --s3-prefix "$STACK" \
+            --output-template-file packaged.yaml
+          aws cloudformation deploy \
+            --template-file packaged.yaml --stack-name "$STACK" \
+            --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND \
+            --no-fail-on-empty-changeset
+          url=$(aws cloudformation describe-stacks --stack-name "$STACK" \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" --output text)
+          echo "api_url=$url" >> "$GITHUB_OUTPUT"
+          echo "Deployed: $url" >> "$GITHUB_STEP_SUMMARY"
+      - name: Show stack events on failure
+        if: failure() && steps.deploy.outcome == 'failure'
+        run: |
+          aws cloudformation describe-stack-events --stack-name "$STACK" --max-items 25 \
+            --query "StackEvents[?contains(ResourceStatus, 'FAILED')].[LogicalResourceId,ResourceStatusReason]" \
+            --output table || true
+      - name: Smoke tests against the deployed API
+        if: steps.deploy.outputs.api_url != ''
+        run: python quality/smoke.py --base-url "${{ steps.deploy.outputs.api_url }}" --summary "$GITHUB_STEP_SUMMARY"
+      - name: record-deployment → production
+        run: python quality/pact_broker.py record-deployment billing pricing quotes

@@ -1,0 +1,129 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  pr-quality-gate services: pricing, quotes, billing as Lambdas behind one HTTP API.
+  Every deploy shifts traffic through a canary (10% for 5 minutes) per function and
+  rolls back automatically if the function's error alarm fires.
+  Services call each other through the same API; they take its domain from the incoming
+  request (setting PRICING_URL/QUOTES_URL here would make the API and functions circular).
+
+Parameters:
+  CanaryType:
+    Type: String
+    Default: Canary10Percent5Minutes
+    AllowedValues: [Canary10Percent5Minutes, Canary10Percent10Minutes, AllAtOnce]
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Architectures: [arm64]
+    MemorySize: 256
+    Timeout: 10
+    AutoPublishAlias: live
+    DeploymentPreference:
+      Type: !Ref CanaryType
+    Environment:
+      Variables:
+        LOG_LEVEL: INFO
+
+Resources:
+  Api:
+    Type: AWS::Serverless::HttpApi
+
+  # --- pricing ------------------------------------------------------------------------
+  PricingFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../.build/pricing
+      Handler: pricing.handler.handler
+      DeploymentPreference:
+        Alarms: [!Ref PricingErrorsAlarm]
+      Events:
+        PriceQuote:
+          Type: HttpApi
+          Properties: {ApiId: !Ref Api, Method: POST, Path: /prices/quote}
+
+  PricingErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: pricing canary - any Lambda error on the live alias rolls back
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - {Name: FunctionName, Value: !Ref PricingFunction}
+        - {Name: Resource, Value: !Sub "${PricingFunction}:live"}
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  # --- quotes -------------------------------------------------------------------------
+  QuotesFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../.build/quotes
+      Handler: quotes.handler.handler
+      DeploymentPreference:
+        Alarms: [!Ref QuotesErrorsAlarm]
+      Events:
+        CreateQuote:
+          Type: HttpApi
+          Properties: {ApiId: !Ref Api, Method: POST, Path: /quotes}
+        GetQuote:
+          Type: HttpApi
+          Properties: {ApiId: !Ref Api, Method: GET, Path: "/quotes/{quote_id}"}
+        AcceptQuote:
+          Type: HttpApi
+          Properties: {ApiId: !Ref Api, Method: POST, Path: "/quotes/{quote_id}/accept"}
+
+  QuotesErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: quotes canary - any Lambda error on the live alias rolls back
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - {Name: FunctionName, Value: !Ref QuotesFunction}
+        - {Name: Resource, Value: !Sub "${QuotesFunction}:live"}
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  # --- billing ------------------------------------------------------------------------
+  BillingFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../.build/billing
+      Handler: billing.handler.handler
+      DeploymentPreference:
+        Alarms: [!Ref BillingErrorsAlarm]
+      Events:
+        CreateInvoiceLine:
+          Type: HttpApi
+          Properties: {ApiId: !Ref Api, Method: POST, Path: /invoice-lines}
+
+  BillingErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: billing canary - any Lambda error on the live alias rolls back
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - {Name: FunctionName, Value: !Ref BillingFunction}
+        - {Name: Resource, Value: !Sub "${BillingFunction}:live"}
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+Outputs:
+  ApiUrl:
+    Description: Base URL of the HTTP API
+    Value: !Sub https://${Api}.execute-api.${AWS::Region}.${AWS::URLSuffix}

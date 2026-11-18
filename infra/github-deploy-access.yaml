@@ -1,0 +1,158 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  pr-quality-gate - deploy access for GitHub Actions in uzhauniak/pr-quality-gate.
+  AuthMode=oidc: short-lived credentials via GitHub OIDC, main branch only (preferred).
+  AuthMode=user: an IAM user for accounts whose SCPs block OIDC providers; create its
+  access key in the IAM console afterwards. Both get the same least-privilege policy.
+
+Parameters:
+  AuthMode:
+    Type: String
+    AllowedValues: [user, oidc]
+    Default: user
+    Description: oidc where allowed; user where an SCP blocks iam:CreateOpenIDConnectProvider
+  GitHubRepo:
+    Type: String
+    Default: uzhauniak/pr-quality-gate
+    Description: owner/repo allowed to assume the deploy role
+  CreateOIDCProvider:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "true"
+    Description: >
+      Set to false if this account already has an IAM OIDC provider for
+      token.actions.githubusercontent.com (there can be only one per account).
+
+Conditions:
+  UseOIDC: !Equals [!Ref AuthMode, oidc]
+  UseUser: !Equals [!Ref AuthMode, user]
+  ShouldCreateProvider: !And
+    - !Condition UseOIDC
+    - !Equals [!Ref CreateOIDCProvider, "true"]
+
+Resources:
+  GitHubOIDCProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: ShouldCreateProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList: [sts.amazonaws.com]
+
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub pqg-artifacts-${AWS::AccountId}-${AWS::Region}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: {SSEAlgorithm: AES256}
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-old-artifacts
+            Status: Enabled
+            ExpirationInDays: 30
+
+  DeployRole:
+    Type: AWS::IAM::Role
+    Condition: UseOIDC
+    Properties:
+      RoleName: pqg-github-deploy
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !If
+                - ShouldCreateProvider
+                - !Ref GitHubOIDCProvider
+                - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubRepo}:ref:refs/heads/main
+
+  DeployPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: pqg-github-deploy
+      Roles: !If [UseOIDC, [!Ref DeployRole], !Ref AWS::NoValue]
+      Users: !If [UseUser, [!Ref DeployUser], !Ref AWS::NoValue]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          # CloudFormation: only stacks named pqg-*
+          - Effect: Allow
+            Action: cloudformation:*
+            Resource:
+              - !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/pqg-*/*
+              - !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:aws:transform/Serverless-2016-10-31
+          - Effect: Allow
+            Action:
+              - cloudformation:ValidateTemplate
+              - cloudformation:GetTemplateSummary
+              - cloudformation:ListStacks
+            Resource: "*"
+          # Build artifacts
+          - Effect: Allow
+            Action: [s3:PutObject, s3:GetObject, s3:ListBucket, s3:GetBucketLocation]
+            Resource:
+              - !GetAtt ArtifactBucket.Arn
+              - !Sub ${ArtifactBucket.Arn}/*
+          # Runtime resources created by the SAM stack
+          - Effect: Allow
+            Action:
+              - lambda:*
+              - apigateway:*
+              - codedeploy:*
+              - cloudwatch:PutMetricAlarm
+              - cloudwatch:DeleteAlarms
+              - cloudwatch:DescribeAlarms
+              - cloudwatch:TagResource
+              - logs:*
+            Resource: "*"
+          # IAM roles the stack creates for Lambda and CodeDeploy (names start with the stack name)
+          - Effect: Allow
+            Action:
+              - iam:CreateRole
+              - iam:DeleteRole
+              - iam:GetRole
+              - iam:TagRole
+              - iam:UntagRole
+              - iam:UpdateAssumeRolePolicy
+              - iam:AttachRolePolicy
+              - iam:DetachRolePolicy
+              - iam:PutRolePolicy
+              - iam:DeleteRolePolicy
+              - iam:GetRolePolicy
+              - iam:PassRole
+            Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/pqg-*
+
+  DeployUser:
+    Type: AWS::IAM::User
+    Condition: UseUser
+    Properties:
+      UserName: pqg-github-deploy
+
+Outputs:
+  DeployRoleArn:
+    Condition: UseOIDC
+    Description: Put this in the GitHub secret AWS_DEPLOY_ROLE_ARN
+    Value: !GetAtt DeployRole.Arn
+  DeployUserName:
+    Condition: UseUser
+    Description: >
+      IAM console -> Users -> this user -> Security credentials -> Create access key
+      (Third-party service). Put the pair in GitHub secrets AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY.
+    Value: !Ref DeployUser
+  ArtifactBucketName:
+    Description: Put this in the GitHub variable AWS_ARTIFACT_BUCKET
+    Value: !Ref ArtifactBucket
+  Region:
+    Description: Put this in the GitHub variable AWS_REGION
+    Value: !Ref AWS::Region

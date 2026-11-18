@@ -35,7 +35,7 @@ class PriceQuote:
 
 class PricingClient:
     def __init__(self, base_url: str, timeout: float = 5.0) -> None:
-        self._base_url = base_url.rstrip("/")
+        self.base_url = base_url.rstrip("/")
         self._timeout = timeout
 
     def quote(self, annual_kwh: float, tariff_code: str, region: str) -> PriceQuote:
@@ -43,7 +43,7 @@ class PricingClient:
             {"annual_kwh": annual_kwh, "tariff_code": tariff_code, "region": region}
         ).encode()
         request = urllib.request.Request(
-            f"{self._base_url}/prices/quote",
+            f"{self.base_url}/prices/quote",
             data=payload,
             method="POST",
             headers={"content-type": "application/json"},

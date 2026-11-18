@@ -4,11 +4,18 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Protocol
+from typing import Any, Protocol
 
 from billing.invoicing import NotBillable, build_invoice_line
 from billing.quotes_client import QuoteMissing, QuotesClient, QuotesUnavailable, QuoteView
-from lambda_http import HttpError, Request, Response, Router, json_response
+from lambda_http import (
+    HttpError,
+    Request,
+    Response,
+    Router,
+    base_url_from_event,
+    json_response,
+)
 
 log = logging.getLogger(__name__)
 
@@ -39,4 +46,12 @@ def build_router(quotes: Quotes) -> Router:
     return router
 
 
-handler = build_router(QuotesClient(os.environ.get("QUOTES_URL", "http://localhost:8002")))
+_quotes = QuotesClient(os.environ.get("QUOTES_URL", "http://localhost:8002"))
+_router = build_router(_quotes)
+
+
+def handler(event: dict[str, Any], context: object | None = None) -> Response:
+    """Lambda entry point. Without QUOTES_URL, quotes is reached through the same API."""
+    if "QUOTES_URL" not in os.environ and (base := base_url_from_event(event)):
+        _quotes.base_url = base
+    return _router(event, context)

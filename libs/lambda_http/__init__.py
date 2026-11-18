@@ -6,6 +6,21 @@
 """
 
 from lambda_http.local_server import serve
-from lambda_http.router import HttpError, Request, Response, Router, json_response
+from lambda_http.router import (
+    HttpError,
+    Request,
+    Response,
+    Router,
+    base_url_from_event,
+    json_response,
+)
 
-__all__ = ["HttpError", "Request", "Response", "Router", "json_response", "serve"]
+__all__ = [
+    "HttpError",
+    "Request",
+    "Response",
+    "Router",
+    "base_url_from_event",
+    "json_response",
+    "serve",
+]

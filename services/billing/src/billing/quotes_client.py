@@ -32,11 +32,11 @@ class QuoteView:
 
 class QuotesClient:
     def __init__(self, base_url: str, timeout: float = 5.0) -> None:
-        self._base_url = base_url.rstrip("/")
+        self.base_url = base_url.rstrip("/")
         self._timeout = timeout
 
     def get_quote(self, quote_id: str) -> QuoteView:
-        url = f"{self._base_url}/quotes/{quote_id}"
+        url = f"{self.base_url}/quotes/{quote_id}"
         try:
             with urllib.request.urlopen(url, timeout=self._timeout) as response:
                 body = json.loads(response.read())

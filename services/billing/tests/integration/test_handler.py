@@ -54,3 +54,15 @@ def test_maps_failures_to_documented_statuses(result, status):
 
 def test_quote_id_is_required():
     assert call(FakeQuotes(None), {})["statusCode"] == 400
+
+
+def test_deployed_handler_reaches_quotes_through_the_same_api(monkeypatch):
+    from billing import handler as module
+
+    monkeypatch.delenv("QUOTES_URL", raising=False)
+    monkeypatch.setattr(module._quotes, "base_url", "http://localhost:8002")
+    event = make_event("POST", PATH, {})
+    event["requestContext"]["domainName"] = "abc123.execute-api.eu-north-1.amazonaws.com"
+
+    assert module.handler(event)["statusCode"] == 400
+    assert module._quotes.base_url == "https://abc123.execute-api.eu-north-1.amazonaws.com"

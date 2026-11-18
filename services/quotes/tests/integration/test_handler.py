@@ -74,3 +74,15 @@ def test_missing_fields_is_400():
 def test_unknown_quote_is_404():
     response, _ = call(make_handler(), "GET", "/quotes/Q-NOPE", "/quotes/{quote_id}")
     assert response["statusCode"] == 404
+
+
+def test_deployed_handler_reaches_pricing_through_the_same_api(monkeypatch):
+    from quotes import handler as module
+
+    monkeypatch.delenv("PRICING_URL", raising=False)
+    monkeypatch.setattr(module._pricing, "base_url", "http://localhost:8001")
+    event = make_event("GET", "/quotes/Q-NOPE")
+    event["requestContext"]["domainName"] = "abc123.execute-api.eu-north-1.amazonaws.com"
+
+    assert module.handler(event)["statusCode"] == 404
+    assert module._pricing.base_url == "https://abc123.execute-api.eu-north-1.amazonaws.com"
