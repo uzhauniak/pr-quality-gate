@@ -4,7 +4,8 @@
     python quality/select_tests.py --files a.py b.py      # explicit file list
     python quality/select_tests.py --full                 # everything (e.g. push to main)
 
-Prints the plan as JSON. In GitHub Actions, --github writes step outputs and a job summary.
+Prints the plan as JSON; --out also saves it for quality/risk.py. In GitHub Actions,
+--github writes step outputs and a job summary.
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ CONFIG = ROOT / "quality" / "deps.yaml"
 @dataclass
 class Plan:
     run_full: bool = False
+    changed: list[str] = field(default_factory=list)
     services: list[str] = field(default_factory=list)
     contracts: list[dict[str, str]] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
@@ -54,6 +56,7 @@ def _matches(path: str, patterns: list[str]) -> bool:
 def full_plan(config: dict[str, Any], reason: str, files: list[str] | None = None) -> Plan:
     return Plan(
         run_full=True,
+        changed=sorted(config["services"]),
         services=sorted(config["services"]),
         contracts=all_contract_pairs(config),
         reasons=[reason],
@@ -93,6 +96,7 @@ def build_plan(files: list[str], config: dict[str, Any]) -> Plan:
         if pair["consumer"] in changed or pair["provider"] in changed
     ]
     return Plan(
+        changed=sorted(changed),
         services=sorted(selected),
         contracts=contracts,
         skipped=sorted(set(services) - selected),
@@ -140,13 +144,22 @@ def summary_markdown(plan: Plan) -> str:
     return "\n".join(lines) + "\n"
 
 
-def write_github(plan: Plan) -> None:
+def plan_from_json(data: dict[str, Any]) -> Plan:
+    return Plan(**data)
+
+
+def write_github(plan: Plan, extra: dict[str, str] | None = None, summary: str = "") -> None:
+    outputs = {
+        "services": json.dumps(plan.services),
+        "contracts": json.dumps(plan.contracts),
+        "changed": json.dumps(plan.changed),
+        "run_full": str(plan.run_full).lower(),
+        **(extra or {}),
+    }
     with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
-        out.write(f"services={json.dumps(plan.services)}\n")
-        out.write(f"contracts={json.dumps(plan.contracts)}\n")
-        out.write(f"run_full={str(plan.run_full).lower()}\n")
-    with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
-        summary.write(summary_markdown(plan))
+        out.writelines(f"{key}={value}\n" for key, value in outputs.items())
+    with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as out:
+        out.write(summary or summary_markdown(plan))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -157,6 +170,7 @@ def main(argv: list[str] | None = None) -> int:
     source.add_argument("--full", action="store_true", help="select everything")
     parser.add_argument("--github", action="store_true", help="write GitHub Actions outputs")
     parser.add_argument("--markdown", action="store_true", help="print the summary table")
+    parser.add_argument("--out", type=Path, help="also save the plan as JSON to this file")
     args = parser.parse_args(argv)
 
     config = load_config()
@@ -167,6 +181,8 @@ def main(argv: list[str] | None = None) -> int:
         plan = build_plan(files, config)
 
     print(summary_markdown(plan) if args.markdown else json.dumps(asdict(plan), indent=2))
+    if args.out:
+        args.out.write_text(json.dumps(asdict(plan), indent=2), encoding="utf-8")
     if args.github:
         write_github(plan)
     return 0
