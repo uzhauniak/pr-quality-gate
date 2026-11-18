@@ -20,6 +20,7 @@ services:
 # A change here can affect every service: run the full suite.
 shared:
   - "libs/*"
+  - "infra/*"
   - "quality/*"
   - "conftest.py"
   - "pyproject.toml"
@@ -47,6 +48,7 @@ risk:
     - "services/*/openapi.yaml" # public API shape
     - "services/*/src/*/*_client.py" # cross-service calls
     - "libs/*"
+    - "infra/*" # deployment and canary config
     - "quality/*"
     - ".github/workflows/*"
   # Without an LLM, these are LOW; any other code change is MEDIUM.

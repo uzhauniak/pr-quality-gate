@@ -1,6 +1,6 @@
 # pr-quality-gate
 
-**Risk-aware CI for Python microservices.** Every PR runs only the tests its change can affect, gets a risk rating from an LLM backed by deterministic policy, and is blocked if it breaks a consumer's contract or changes code no test would notice.
+**Risk-aware CI/CD for Python microservices on AWS Lambda.** Every PR runs only the tests its change can affect, gets a risk rating from an LLM backed by deterministic policy, and is blocked if it breaks a consumer's contract or changes code no test would notice. Every green `main` build ships through a canary that rolls itself back.
 
 Three problems show up as a service estate grows:
 
@@ -26,7 +26,7 @@ flowchart LR
     T --> G{quality-gate}
     C --> G
     M --> G
-    G -->|main| D[record deployment]
+    G -->|main| D[deploy to AWS<br/>can-i-deploy → canary → smoke → record]
 ```
 
 ## How it works
@@ -72,6 +72,18 @@ For HIGH-risk PRs, each changed source line gets small semantic edits, one at a 
 ### 5. One required check
 The `quality-gate` job aggregates everything: jobs the plan skipped count as passed, failed or cancelled ones don't. Branch protection needs exactly one required status check, however the plan changes.
 
+### 6. Deploy: canary, smoke tests, record
+[`infra/template.yaml`](infra/template.yaml), [`quality/smoke.py`](quality/smoke.py)
+
+Each green build of `main`:
+
+1. **`can-i-deploy`** checks all three services against what PactFlow says is live in `production`.
+2. **AWS SAM** deploys the Lambdas behind one HTTP API. Each function publishes a new version behind a `live` alias, and **CodeDeploy shifts 10% of traffic for 5 minutes, then 100%**. If the function's CloudWatch error alarm fires during the canary, traffic returns to the previous version automatically. No manual sign-off.
+3. **Smoke tests** hit the deployed API over every real network path (client → pricing, client → quotes → pricing, client → billing → quotes) and validate responses against the OpenAPI specs.
+4. **`record-deployment`** tells the broker what is now live, which is what the next PR's `can-i-deploy` is checked against.
+
+Services find each other through the API's own domain, taken from the incoming request: wiring the URL in as an environment variable would make the API and the functions depend on each other in CloudFormation.
+
 ## Demo PRs
 
 | Branch | Change | Risk | What the gate does |
@@ -102,6 +114,7 @@ GitHub Actions secrets (each is optional; without it, that step falls back as de
 | `PACT_BROKER_BASE_URL`, `PACT_BROKER_TOKEN` (read/write) | publishing pacts and results, can-i-deploy, record-deployment |
 | `ANTHROPIC_API_KEY` | LLM change-risk review |
 | `RISK_MODEL` (repository *variable*) | model override; default `claude-sonnet-5-5` |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`; variables `AWS_REGION`, `AWS_ARTIFACT_BUCKET` | deploying to AWS (create them with [`infra/github-deploy-access.yaml`](infra/github-deploy-access.yaml)) |
 
 ## Design decisions and trade-offs
 
@@ -111,11 +124,12 @@ GitHub Actions secrets (each is optional; without it, that step falls back as de
 - **Pending pacts are excluded.** Consumer and provider change in the same PR here, so a failing pact must fail the build. In a multi-repo setup you'd include pending and WIP pacts, so a new consumer expectation doesn't break a provider build it hasn't been negotiated with yet.
 - **A static dependency map, not one inferred from imports.** Services talk over HTTP, so import analysis can't see the real edges. Unknown paths trigger a full run, so a stale map costs time, not safety.
 
-## Next: AWS
+- **IAM user keys instead of OIDC, here only.** The demo account sits in an AWS-managed organization whose SCPs block creating an OIDC identity provider. [`infra/github-deploy-access.yaml`](infra/github-deploy-access.yaml) supports both modes: `AuthMode=oidc` (short-lived credentials, `main` branch only) for normal accounts, and `AuthMode=user` with the same least-privilege policy (stacks, roles and bucket all prefixed `pqg-`) for this one.
+- **Canary on Lambda errors only.** A latency alarm (p95 on the alias) is the obvious next signal, but on a cold, low-traffic demo stack it would mostly measure cold starts. Smoke traffic uses 4xx paths only, so it never trips the alarm itself.
+- **In-memory quote store.** Fine for the demo and for provider states; a real deployment would use DynamoDB, since Lambda containers don't share memory. Smoke tests therefore avoid flows that need a quote to survive between invocations.
 
-`record-deployment` currently stands in for a real deploy. Next step:
+## Next
 
-- deploy the three Lambdas behind API Gateway with **AWS SAM**, authenticated from GitHub Actions via **OIDC** (no long-lived keys);
-- **canary releases** with CodeDeploy (`Canary10Percent5Minutes`) and CloudWatch alarms on error rate and p95 latency → automatic promote or roll back, no manual sign-off;
-- `can-i-deploy` before and `record-deployment` after each environment; smoke tests against the deployed stage;
-- a design for **ephemeral self-hosted runners** (e.g. on EC2 via Terraform) for jobs that need VPC access.
+- Self-hosted runners for VPC-bound jobs: [design doc](docs/self-hosted-runners.md).
+- Latency alarm and a PreTraffic hook that runs the smoke suite against the new version before any user traffic reaches it.
+- Nightly full-module mutation testing to track suite quality over time.

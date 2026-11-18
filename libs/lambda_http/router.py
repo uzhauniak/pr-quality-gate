@@ -85,6 +85,12 @@ class Router:
         return json_response(404, {"error": f"no route for {path}"})
 
 
+def base_url_from_event(event: dict[str, Any]) -> str | None:
+    """https://<api-domain> of the API Gateway that delivered this event, if any."""
+    domain = (event.get("requestContext") or {}).get("domainName")
+    return f"https://{domain}" if domain else None
+
+
 def make_event(method: str, path: str, body: Any = None) -> dict[str, Any]:
     """Build an API Gateway v2 event. Used by tests and the local server."""
     if body is not None and not isinstance(body, str):

@@ -3,8 +3,16 @@
 from __future__ import annotations
 
 import os
+from typing import Any
 
-from lambda_http import HttpError, Request, Response, Router, json_response
+from lambda_http import (
+    HttpError,
+    Request,
+    Response,
+    Router,
+    base_url_from_event,
+    json_response,
+)
 from quotes.pricing_client import PricingClient, PricingRejected, PricingUnavailable
 from quotes.service import (
     InMemoryQuoteStore,
@@ -62,9 +70,12 @@ def build_router(service: QuoteService) -> Router:
     return router
 
 
-def _default_handler() -> Router:
-    pricing = PricingClient(os.environ.get("PRICING_URL", "http://localhost:8001"))
-    return build_router(QuoteService(pricing, InMemoryQuoteStore()))
+_pricing = PricingClient(os.environ.get("PRICING_URL", "http://localhost:8001"))
+_router = build_router(QuoteService(_pricing, InMemoryQuoteStore()))
 
 
-handler = _default_handler()
+def handler(event: dict[str, Any], context: object | None = None) -> Response:
+    """Lambda entry point. Without PRICING_URL, pricing is reached through the same API."""
+    if "PRICING_URL" not in os.environ and (base := base_url_from_event(event)):
+        _pricing.base_url = base
+    return _router(event, context)

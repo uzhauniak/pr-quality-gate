@@ -66,7 +66,7 @@ def test_shared_change_runs_everything(config, path):
 
 
 def test_unknown_path_fails_safe_to_full_run(config):
-    plan = build_plan(["infra/terraform/main.tf"], config)
+    plan = build_plan(["terraform/main.tf"], config)
 
     assert plan.run_full
     assert "not in dependency model" in plan.reasons[0]
