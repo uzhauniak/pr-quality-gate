@@ -64,7 +64,7 @@ class PriceBreakdown:
 
 def volume_discount(annual_kwh: Decimal) -> Decimal:
     for threshold, discount in VOLUME_TIERS:
-        if annual_kwh >= threshold:
+        if annual_kwh > threshold:
             return discount
     return Decimal(0)
 
