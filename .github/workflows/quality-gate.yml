@@ -14,15 +14,29 @@ permissions:
 
 env:
   PYTHON_VERSION: "3.12"
+  BASE_REF: origin/${{ github.base_ref || 'main' }}
+  # Pact Broker (PactFlow). Without these secrets the pipeline falls back to local pact files.
+  PACT_BROKER_BASE_URL: ${{ secrets.PACT_BROKER_BASE_URL }}
+  PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
+  PACT_VERSION: ${{ github.event.pull_request.head.sha || github.sha }}
+  PACT_BRANCH: ${{ github.head_ref || github.ref_name }}
+  BUILD_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+  PACT_DO_NOT_TRACK: "true"
 
 jobs:
   plan:
-    name: plan (select tests)
+    name: plan (select tests + assess risk)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write # risk comment
     outputs:
-      services: ${{ steps.select.outputs.services }}
-      contracts: ${{ steps.select.outputs.contracts }}
-      run_full: ${{ steps.select.outputs.run_full }}
+      services: ${{ steps.plan.outputs.services }}
+      contracts: ${{ steps.plan.outputs.contracts }}
+      changed: ${{ steps.plan.outputs.changed }}
+      run_full: ${{ steps.plan.outputs.run_full }}
+      risk: ${{ steps.plan.outputs.risk }}
+      mutation_targets: ${{ steps.plan.outputs.mutation_targets }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -35,16 +49,26 @@ jobs:
       - run: pip install -r requirements-dev.txt
       - name: Lint
         run: ruff check . && ruff format --check .
-      - name: Test the selector itself
+      - name: Test the gate's own tooling
         run: pytest quality/tests
-      - name: Select tests
-        id: select
+      - name: Select tests and assess risk
+        id: plan
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          RISK_MODEL: ${{ vars.RISK_MODEL }}
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            python quality/select_tests.py --base "origin/${{ github.base_ref }}" --github
+            python quality/select_tests.py --base "$BASE_REF" --out plan.json > /dev/null
+            python quality/risk.py --base "$BASE_REF" --plan plan.json --comment risk.md --github
           else
             python quality/select_tests.py --full --github
           fi
+      - name: Post risk comment
+        if: github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: change-risk
+          path: risk.md
 
   test:
     name: test (${{ matrix.service }})
@@ -79,8 +103,13 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-dev.txt
       - run: pip install -r requirements-dev.txt
-      - name: Consumer tests → provider verification
-        run: python quality/run_contracts.py --pairs '${{ needs.plan.outputs.contracts }}'
+      - name: Broker setup (environment, main branches)
+        run: python quality/pact_broker.py setup billing pricing quotes
+      - name: Consumer tests → publish pacts → provider verification
+        run: python quality/run_contracts.py --broker --pairs '${{ needs.plan.outputs.contracts }}'
+      - name: can-i-deploy (changed services → production)
+        if: always() && github.event_name == 'pull_request'
+        run: python quality/pact_broker.py can-i-deploy ${{ join(fromJson(needs.plan.outputs.changed), ' ') }}
       - name: Keep generated pacts for inspection
         if: always()
         uses: actions/upload-artifact@v4
@@ -89,24 +118,59 @@ jobs:
           path: pacts/*.json
           if-no-files-found: ignore
 
+  mutation:
+    name: mutation (changed lines)
+    needs: plan
+    if: needs.plan.outputs.risk == 'high' && needs.plan.outputs.mutation_targets != '[]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - name: Mutate changed source lines, run the owning service's tests
+        run: python quality/mutate.py --base "$BASE_REF" --summary "$GITHUB_STEP_SUMMARY"
+
   # Single required status check for branch protection. Skipped jobs are fine
   # (the plan decided they weren't needed); failed or cancelled jobs are not.
   gate:
     name: quality-gate
-    needs: [plan, test, contracts]
+    needs: [plan, test, contracts, mutation]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Evaluate
         run: |
-          echo "plan=${{ needs.plan.result }} test=${{ needs.test.result }} contracts=${{ needs.contracts.result }}"
-          for result in "${{ needs.plan.result }}" "${{ needs.test.result }}" "${{ needs.contracts.result }}"; do
+          echo "plan=${{ needs.plan.result }} test=${{ needs.test.result }} contracts=${{ needs.contracts.result }} mutation=${{ needs.mutation.result }}"
+          if [ "${{ needs.plan.result }}" != "success" ]; then
+            echo "::error::plan did not run"
+            exit 1
+          fi
+          for result in "${{ needs.test.result }}" "${{ needs.contracts.result }}" "${{ needs.mutation.result }}"; do
             if [ "$result" != "success" ] && [ "$result" != "skipped" ]; then
               echo "::error::quality gate failed"
               exit 1
             fi
           done
-          if [ "${{ needs.plan.result }}" != "success" ]; then
-            echo "::error::plan did not run"
-            exit 1
-          fi
+
+  # Stand-in for a real deployment (phase 3: AWS SAM + canary). Recording it tells the
+  # broker what is live, which is what can-i-deploy checks pull requests against.
+  record-deployment:
+    name: record deployment (production)
+    needs: gate
+    if: github.event_name == 'push' && needs.gate.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - run: python quality/pact_broker.py record-deployment billing pricing quotes

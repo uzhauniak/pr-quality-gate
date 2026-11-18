@@ -3,3 +3,5 @@ pact-python>=3.0
 openapi-schema-validator>=0.6
 PyYAML>=6.0
 ruff>=0.6
+pact-python-cli>=0.10
+anthropic>=0.40

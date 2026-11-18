@@ -5,7 +5,7 @@ from pact import Verifier
 
 from lambda_http import serve
 from pricing.handler import handler
-from testkit.contracts import pact_file, verify
+from testkit.contracts import verify, with_pacts
 
 pytestmark = pytest.mark.contract
 
@@ -16,7 +16,9 @@ CONSUMERS = ["quotes"]
 def test_pricing_honours_consumer_pact(consumer: str) -> None:
     with serve(handler) as base_url:
         verify(
-            Verifier("pricing", host="127.0.0.1")
-            .add_transport(url=base_url)
-            .add_source(pact_file(consumer, "pricing"))
+            with_pacts(
+                Verifier("pricing", host="127.0.0.1").add_transport(url=base_url),
+                consumer,
+                "pricing",
+            )
         )

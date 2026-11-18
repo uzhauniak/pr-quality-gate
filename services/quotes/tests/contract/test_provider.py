@@ -10,7 +10,7 @@ from lambda_http import serve
 from quotes.handler import build_router
 from quotes.pricing_client import PriceQuote
 from quotes.service import InMemoryQuoteStore, Quote, QuoteService
-from testkit.contracts import pact_file, verify
+from testkit.contracts import verify, with_pacts
 
 pytestmark = pytest.mark.contract
 
@@ -50,10 +50,11 @@ def test_quotes_honours_consumer_pact(consumer: str) -> None:
     handler = build_router(QuoteService(UnusedPricing(), store))
     with serve(handler) as base_url:
         verify(
-            Verifier("quotes", host="127.0.0.1")
-            .add_transport(url=base_url)
-            .add_source(pact_file(consumer, "quotes"))
-            .state_handler(
+            with_pacts(
+                Verifier("quotes", host="127.0.0.1").add_transport(url=base_url),
+                consumer,
+                "quotes",
+            ).state_handler(
                 {
                     "quote Q-ACCEPTED-1 exists and is accepted": accepted_quote_exists,
                     "no quotes exist": no_quotes,

@@ -37,3 +37,20 @@ ignore:
   - "pacts/.gitkeep"
 
 # Anything not matched above is treated as unknown → full run (fail safe, never fail open).
+
+# Change-risk policy (quality/risk.py).
+# high_floor: touching these makes a change HIGH risk no matter what the LLM says.
+# The LLM may raise any rating, never lower one below this floor.
+risk:
+  high_floor:
+    - "services/pricing/src/pricing/engine.py" # money maths
+    - "services/*/openapi.yaml" # public API shape
+    - "services/*/src/*/*_client.py" # cross-service calls
+    - "libs/*"
+    - "quality/*"
+    - ".github/workflows/*"
+  # Without an LLM, these are LOW; any other code change is MEDIUM.
+  low_without_llm:
+    - "*.md"
+    - "docs/*"
+    - "services/*/tests/*"
