@@ -41,7 +41,7 @@ def build_invoice_line(quote: QuoteView) -> InvoiceLine:
     return InvoiceLine(
         quote_id=quote.id,
         customer_id=quote.customer_id,
-        description=f"Electricity supply (quote {quote.id}), monthly instalment",
+        description=f"Electricity supply, monthly instalment (quote {quote.id})",
         monthly_amount=monthly,
         currency=quote.currency,
     )
