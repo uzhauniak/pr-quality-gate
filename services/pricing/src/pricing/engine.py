@@ -55,7 +55,7 @@ class PriceBreakdown:
     def to_dict(self) -> dict[str, object]:
         return {
             "tariff_code": self.tariff_code,
-            "unit_rate": float(self.unit_rate),
+            "unit_rate_pence": float(self.unit_rate),
             "standing_charge": float(self.standing_charge),
             "annual_cost": float(self.annual_cost),
             "currency": self.currency,

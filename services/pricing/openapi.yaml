@@ -44,10 +44,10 @@ components:
     Price:
       type: object
       additionalProperties: false
-      required: [tariff_code, unit_rate, standing_charge, annual_cost, currency]
+      required: [tariff_code, unit_rate_pence, standing_charge, annual_cost, currency]
       properties:
         tariff_code: { type: string }
-        unit_rate: { type: number, description: "pence per kWh" }
+        unit_rate_pence: { type: number, description: "pence per kWh" }
         standing_charge: { type: number, description: "pence per day" }
         annual_cost: { type: number, description: "pounds per year" }
         currency: { type: string, const: GBP }

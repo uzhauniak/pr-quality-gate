@@ -24,7 +24,7 @@ def test_prices_a_valid_request():
 
     assert response["statusCode"] == 200
     body = json.loads(response["body"])
-    assert body["unit_rate"] == 24.5
+    assert body["unit_rate_pence"] == 24.5
     assert body["annual_cost"] == 5100.75
 
 
