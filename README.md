@@ -51,7 +51,7 @@ The gate's own tooling is tested on every PR before it's trusted ([`quality/test
 Two signals, combined so the gate can only get stricter:
 
 - **Policy floor** (`risk.high_floor` in `deps.yaml`): money maths, public API specs, cross-service clients, shared code and CI are always **HIGH**. Deterministic and reviewable like code.
-- **LLM review** of the diff (Claude via the Anthropic API). The model is forced through a tool schema to return `{risk, reasons, suggested_checks}` and told the diff is untrusted input. It **may raise the rating, never lower it below the floor**.
+- **LLM review** of the diff (Claude via the Anthropic API). Structured outputs constrain the answer to a JSON schema (`{risk, reasons, suggested_checks}`), and the prompt marks the diff as untrusted input. It **may raise the rating, never lower it below the floor**.
 
 The result is posted as a sticky PR comment. **HIGH escalates** the plan to a full test run, all contracts, and mutation testing of the changed lines. With no API key, or if the call fails, the same policy runs without the LLM: code changes are MEDIUM, docs and tests are LOW.
 

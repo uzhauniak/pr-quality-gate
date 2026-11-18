@@ -1,5 +1,6 @@
 """Risk policy: the LLM can raise the rating, never lower it below the deterministic floor."""
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -22,7 +23,7 @@ def policy(config):
 
 
 class FakeLLM:
-    """Stands in for anthropic.Anthropic: records the call, returns a tool_use block."""
+    """Stands in for anthropic.Anthropic: records the call, returns a JSON text block."""
 
     def __init__(self, answer=None, error=None):
         self.answer, self.error, self.calls = answer, error, []
@@ -32,7 +33,9 @@ class FakeLLM:
         self.calls.append(kwargs)
         if self.error:
             raise self.error
-        return SimpleNamespace(content=[SimpleNamespace(type="tool_use", input=self.answer)])
+        thinking = SimpleNamespace(type="thinking", thinking="...")
+        text = SimpleNamespace(type="text", text=json.dumps(self.answer))
+        return SimpleNamespace(content=[thinking, text])
 
 
 def llm(risk, reasons=("because",), checks=()):
@@ -64,12 +67,14 @@ def test_llm_can_raise_above_floor(config, policy):
     assert run([INVOICING], llm("high"), config, policy).risk == "high"
 
 
-def test_llm_is_forced_to_use_the_schema_and_told_diff_is_untrusted(config, policy):
+def test_llm_output_is_schema_constrained_and_diff_marked_untrusted(config, policy):
     client = llm("low")
     run([INVOICING], client, config, policy)
 
     call = client.calls[0]
-    assert call["tool_choice"] == {"type": "tool", "name": "report_risk"}
+    output_format = call["output_config"]["format"]
+    assert output_format["type"] == "json_schema"
+    assert output_format["schema"]["properties"]["risk"]["enum"] == ["low", "medium", "high"]
     assert "untrusted" in call["system"]
     assert "<diff>" in call["messages"][0]["content"]
 

@@ -86,6 +86,11 @@ def setup(services: list[str]) -> None:
         broker("create-or-update-pacticipant", "--name", service, "--main-branch", MAIN_BRANCH)
 
 
+# Before anything has been recorded as deployed there is nothing live to break. This only
+# happens while bootstrapping the broker; afterwards every main build records a deployment.
+NOTHING_DEPLOYED = "no version is currently recorded as deployed/released in this environment"
+
+
 def can_i_deploy(services: list[str]) -> int:
     failed = []
     for service in services:
@@ -97,8 +102,11 @@ def can_i_deploy(services: list[str]) -> int:
             "--retry-while-unknown", "6",
             "--retry-interval", "10",
             check=False,
+            capture=True,
         )  # fmt: skip
-        if result.returncode != 0:
+        if result.returncode != 0 and NOTHING_DEPLOYED in result.stdout + result.stderr:
+            print(f"::warning::{service}: nothing in {ENVIRONMENT} yet; allowed (bootstrap)")
+        elif result.returncode != 0:
             failed.append(service)
     if failed:
         print(f"\ncan-i-deploy: NO for {', '.join(failed)} → {ENVIRONMENT}")
