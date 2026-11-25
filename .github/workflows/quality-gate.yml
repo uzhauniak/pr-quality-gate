@@ -168,6 +168,9 @@ jobs:
     if: always() && github.event_name == 'push' && needs.gate.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    environment:
+      name: production
+      url: ${{ steps.deploy.outputs.api_url }}
     concurrency:
       group: deploy-production
       cancel-in-progress: false

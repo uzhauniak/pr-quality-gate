@@ -12,6 +12,12 @@ Parameters:
     Type: String
     Default: Canary10Percent5Minutes
     AllowedValues: [Canary10Percent5Minutes, Canary10Percent10Minutes, AllAtOnce]
+  PricingHandler:
+    Type: String
+    Default: pricing.handler.handler
+    Description: >
+      Only the rollback drill (.github/workflows/rollback-drill.yml) overrides this, pointing
+      pricing at a handler that does not exist so every canary invocation fails.
 
 Globals:
   Function:
@@ -29,13 +35,18 @@ Globals:
 Resources:
   Api:
     Type: AWS::Serverless::HttpApi
+    Properties:
+      # The API is public (linked from the README): cap it so stray traffic can't run up costs.
+      DefaultRouteSettings:
+        ThrottlingRateLimit: 5
+        ThrottlingBurstLimit: 10
 
   # --- pricing ------------------------------------------------------------------------
   PricingFunction:
     Type: AWS::Serverless::Function
     Properties:
       CodeUri: ../.build/pricing
-      Handler: pricing.handler.handler
+      Handler: !Ref PricingHandler
       DeploymentPreference:
         Alarms: [!Ref PricingErrorsAlarm]
       Events:
