@@ -10,6 +10,36 @@ Three problems show up as a service estate grows:
 
 This repo is a small reference implementation of a quality gate for all three, on three Lambda-style services in an energy-pricing domain.
 
+## See it in action
+
+| Pull request | Change | What the gate does |
+|---|---|---|
+| [#7 low risk](https://github.com/uzhauniak/pr-quality-gate/pull/7) | wording in billing | LLM rates it LOW → only billing's suite and its contract run ✅ |
+| [#6 breaking contract](https://github.com/uzhauniak/pr-quality-gate/pull/6) | pricing renames a field, updates its own spec and tests | its own tests pass, **Pact verification fails, can-i-deploy says no** ❌ |
+| [#8 pricing formula](https://github.com/uzhauniak/pr-quality-gate/pull/8) | `>=` → `>` on a discount boundary | every test passes, **a mutant survives on the changed line** ❌ |
+
+Open a PR's **Checks** tab for the job summaries (test plan, mutation table) and the conversation for the LLM risk comment.
+
+## Live
+
+The `main` branch is deployed to **AWS Lambda in eu-north-1** on every green build, and contracts live in **PactFlow**:
+
+| | |
+|---|---|
+| Contracts | [![quotes → pricing](https://vza.pactflow.io/pacts/provider/pricing/consumer/quotes/latest/badge.svg?label=quotes+→+pricing)](https://vza.pactflow.io/pacts/provider/pricing/consumer/quotes/latest) [![billing → quotes](https://vza.pactflow.io/pacts/provider/quotes/consumer/billing/latest/badge.svg?label=billing+→+quotes)](https://vza.pactflow.io/pacts/provider/quotes/consumer/billing/latest) |
+| can-i-deploy → production | [![pricing](https://vza.pactflow.io/pacticipants/pricing/branches/main/latest-version/can-i-deploy/to-environment/production/badge?label=pricing)](https://vza.pactflow.io) [![quotes](https://vza.pactflow.io/pacticipants/quotes/branches/main/latest-version/can-i-deploy/to-environment/production/badge?label=quotes)](https://vza.pactflow.io) [![billing](https://vza.pactflow.io/pacticipants/billing/branches/main/latest-version/can-i-deploy/to-environment/production/badge?label=billing)](https://vza.pactflow.io) |
+| Deployments | the **production** environment in this repo's sidebar links to the live API; each run of the [quality-gate workflow on main](https://github.com/uzhauniak/pr-quality-gate/actions/workflows/quality-gate.yml?query=branch%3Amain) shows the deployed URL and a smoke-test table in its summary |
+| Rollback | the [rollback-drill workflow](https://github.com/uzhauniak/pr-quality-gate/actions/workflows/rollback-drill.yml) deploys a broken release under live traffic and checks that the canary rolled it back |
+
+Try it (rate-limited to 5 requests/s):
+
+```bash
+curl -s -X POST https://c61cc2vl4l.execute-api.eu-north-1.amazonaws.com/prices/quote \
+  -H 'content-type: application/json' \
+  -d '{"annual_kwh": 20000, "tariff_code": "FIXED-12M", "region": "NW"}'
+# {"tariff_code": "FIXED-12M", "unit_rate": 24.5, "standing_charge": 55.0, "annual_cost": 5100.75, "currency": "GBP"}
+```
+
 ```mermaid
 flowchart LR
     subgraph services
@@ -82,15 +112,9 @@ Each green build of `main`:
 3. **Smoke tests** hit the deployed API over every real network path (client → pricing, client → quotes → pricing, client → billing → quotes) and validate responses against the OpenAPI specs.
 4. **`record-deployment`** tells the broker what is now live, which is what the next PR's `can-i-deploy` is checked against.
 
+**Rollback drill:** [`rollback-drill.yml`](.github/workflows/rollback-drill.yml) (run by hand) deploys a pricing release whose handler doesn't exist while [`quality/traffic.py`](quality/traffic.py) sends steady traffic. 10% of it hits the broken version, the error alarm fires, CodeDeploy shifts traffic back and CloudFormation rolls the stack back. The drill then checks the alias and stack status and reruns the smoke tests.
+
 Services find each other through the API's own domain, taken from the incoming request: wiring the URL in as an environment variable would make the API and the functions depend on each other in CloudFormation.
-
-## Demo PRs
-
-| Branch | Change | Risk | What the gate does |
-|---|---|---|---|
-| `demo/low-risk` | wording in billing | LOW (LLM) | tests **billing** only, plus billing's pact with quotes; pricing and quotes are skipped → ✅ |
-| `demo/breaking-contract` | pricing renames `unit_rate` → `unit_rate_pence` and updates its own spec + tests | HIGH (policy: `openapi.yaml`, `engine.py`) | all suites ✅, mutation ✅, **Pact verification ❌** `missing the following keys: unit_rate`, **can-i-deploy: NO** → merge blocked |
-| `demo/pricing-formula` | volume-discount boundary `>=` → `>` | HIGH (policy: `engine.py`) | all suites ✅, contracts ✅, **mutation ❌**: `engine.py:67 > → >= survived — add a test at the boundary value` → merge blocked |
 
 ## Setup
 

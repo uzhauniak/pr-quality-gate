@@ -1,0 +1,117 @@
+name: rollback-drill
+
+# Proves the canary's automated rollback on the real stack: deploys a pricing release
+# whose handler does not exist while synthetic traffic runs, then checks that CodeDeploy
+# rolled traffic back, CloudFormation rolled the stack back, and production still works.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  drill:
+    name: canary rollback drill
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: ${{ vars.AWS_REGION }}
+      ARTIFACT_BUCKET: ${{ vars.AWS_ARTIFACT_BUCKET }}
+      STACK: pqg-services
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+
+      - name: Record what is live
+        id: before
+        run: |
+          fn=$(aws cloudformation describe-stack-resource --stack-name "$STACK" \
+            --logical-resource-id PricingFunction --query StackResourceDetail.PhysicalResourceId --output text)
+          version=$(aws lambda get-alias --function-name "$fn" --name live --query FunctionVersion --output text)
+          url=$(aws cloudformation describe-stacks --stack-name "$STACK" \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" --output text)
+          {
+            echo "function=$fn"
+            echo "version=$version"
+            echo "url=$url"
+          } >> "$GITHUB_OUTPUT"
+          echo "Live before the drill: pricing \`live\` → version $version"
+
+      - name: Deploy a broken pricing release under live traffic (expected to fail)
+        id: bad
+        continue-on-error: true
+        env:
+          API_URL: ${{ steps.before.outputs.url }}
+        run: |
+          python infra/build.py
+          aws cloudformation package --template-file infra/template.yaml \
+            --s3-bucket "$ARTIFACT_BUCKET" --s3-prefix "$STACK" --output-template-file packaged.yaml
+          python quality/traffic.py --base-url "$API_URL" --duration 900 --rps 2 > traffic.log 2>&1 &
+          traffic=$!
+          set +e
+          aws cloudformation deploy --template-file packaged.yaml --stack-name "$STACK" \
+            --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND \
+            --parameter-overrides PricingHandler=pricing.handler.does_not_exist
+          result=$?
+          kill "$traffic" 2>/dev/null
+          cat traffic.log
+          exit $result
+
+      - name: Finish the stack rollback if it stalled
+        if: always()
+        run: |
+          status=$(aws cloudformation describe-stacks --stack-name "$STACK" --query "Stacks[0].StackStatus" --output text)
+          if [ "$status" = "UPDATE_ROLLBACK_FAILED" ]; then
+            aws cloudformation continue-update-rollback --stack-name "$STACK"
+            aws cloudformation wait stack-rollback-complete --stack-name "$STACK"
+          fi
+
+      - name: Verify the rollback
+        env:
+          FUNCTION: ${{ steps.before.outputs.function }}
+          VERSION_BEFORE: ${{ steps.before.outputs.version }}
+          API_URL: ${{ steps.before.outputs.url }}
+          BAD_OUTCOME: ${{ steps.bad.outcome }}
+        run: |
+          status=$(aws cloudformation describe-stacks --stack-name "$STACK" --query "Stacks[0].StackStatus" --output text)
+          version_after=$(aws lambda get-alias --function-name "$FUNCTION" --name live --query FunctionVersion --output text)
+          app=$(aws cloudformation describe-stack-resource --stack-name "$STACK" \
+            --logical-resource-id ServerlessDeploymentApplication --query StackResourceDetail.PhysicalResourceId --output text)
+          group=$(aws cloudformation describe-stack-resource --stack-name "$STACK" \
+            --logical-resource-id PricingFunctionDeploymentGroup --query StackResourceDetail.PhysicalResourceId --output text)
+          deployment=$(aws deploy list-deployments --application-name "$app" --deployment-group-name "$group" \
+            --query "deployments[0]" --output text)
+          aws deploy get-deployment --deployment-id "$deployment" \
+            --query "deploymentInfo.{status:status,rollback:rollbackInfo,error:errorInformation}" --output json | tee codedeploy.json
+          {
+            echo "## Canary rollback drill"
+            echo
+            echo "| Check | Result |"
+            echo "|---|---|"
+            echo "| Broken release deploy | \`$BAD_OUTCOME\` (expected: failure) |"
+            echo "| CodeDeploy deployment \`$deployment\` | \`$(python -c 'import json;print(json.load(open("codedeploy.json"))["status"])')\` |"
+            echo "| Stack status | \`$status\` |"
+            echo "| pricing \`live\` alias | version $VERSION_BEFORE → $version_after |"
+            echo
+            echo '```json'
+            cat codedeploy.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          test "$BAD_OUTCOME" = "failure" || { echo "::error::the broken release was not stopped"; exit 1; }
+          test "$version_after" = "$VERSION_BEFORE" || { echo "::error::live alias did not return to $VERSION_BEFORE"; exit 1; }
+          case "$status" in UPDATE_ROLLBACK_COMPLETE|UPDATE_COMPLETE) ;; *) echo "::error::stack is $status"; exit 1;; esac
+          python quality/smoke.py --base-url "$API_URL" --summary "$GITHUB_STEP_SUMMARY"
