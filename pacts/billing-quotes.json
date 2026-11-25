@@ -1,0 +1,102 @@
+{
+  "consumer": {
+    "name": "billing"
+  },
+  "interactions": [
+    {
+      "_id": "79b169dd474785503aeb49870d5379ddfed58f01",
+      "description": "a request for a quote that does not exist",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "no quotes exist"
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "path": "/quotes/Q-MISSING"
+      },
+      "response": {
+        "status": 404
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "_id": "b30ed14ddfe2e583fa0ca5d6cfe2ae1ae6ae1adc",
+      "description": "a request for an accepted quote",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "quote Q-ACCEPTED-1 exists and is accepted"
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "path": "/quotes/Q-ACCEPTED-1"
+      },
+      "response": {
+        "body": {
+          "content": {
+            "customer_id": "C-42",
+            "id": "Q-ACCEPTED-1",
+            "price": {
+              "annual_cost": 5100.75,
+              "currency": "GBP"
+            },
+            "status": "ACCEPTED"
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.customer_id": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.price.annual_cost": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "number"
+                }
+              ]
+            },
+            "$.price.currency": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    }
+  ],
+  "metadata": {
+    "pactRust": {
+      "ffi": "0.5.12",
+      "models": "1.3.16"
+    },
+    "pactSpecification": {
+      "version": "4.0"
+    }
+  },
+  "provider": {
+    "name": "quotes"
+  },
+  "createdAt": "2026-11-25T14:48:30+00:00"
+}
