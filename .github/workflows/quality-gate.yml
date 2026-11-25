@@ -168,6 +168,8 @@ jobs:
     if: always() && github.event_name == 'push' && needs.gate.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: write # publish PactFlow badges to the `badges` branch
     environment:
       name: production
       url: ${{ steps.deploy.outputs.api_url }}
@@ -218,3 +220,10 @@ jobs:
         run: python quality/smoke.py --base-url "${{ steps.deploy.outputs.api_url }}" --summary "$GITHUB_STEP_SUMMARY"
       - name: record-deployment → production
         run: python quality/pact_broker.py record-deployment billing pricing quotes
+      # PactFlow serves badges only to authenticated requests, so the README can't embed
+      # them directly. Fetch them with the token and publish them on a `badges` branch.
+      - name: Publish PactFlow badges
+        if: env.PACT_BROKER_TOKEN != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python quality/pact_badges.py --out badges && bash quality/publish_badges.sh badges
