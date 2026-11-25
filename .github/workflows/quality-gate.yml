@@ -224,6 +224,7 @@ jobs:
       # them directly. Fetch them with the token and publish them on a `badges` branch.
       - name: Publish PactFlow badges
         if: env.PACT_BROKER_TOKEN != ''
+        continue-on-error: true # cosmetic: never fail a deploy over badges
         env:
           GH_TOKEN: ${{ github.token }}
         run: python quality/pact_badges.py --out badges && bash quality/publish_badges.sh badges

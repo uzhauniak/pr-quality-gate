@@ -45,11 +45,21 @@ def main() -> int:
     failed = 0
     for name, path in badges().items():
         request = urllib.request.Request(
-            base + path, headers={"Authorization": f"Bearer {token}", "Accept": "image/svg+xml"}
+            base + path,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "image/svg+xml",
+                # the default Python-urllib agent is refused by PactFlow's edge
+                "User-Agent": "pr-quality-gate-ci/1.0",
+            },
         )
         try:
             with urllib.request.urlopen(request, timeout=20) as response:
                 svg = response.read()
+        except urllib.error.HTTPError as err:
+            print(f"FAIL {name}: HTTP {err.code} {err.read()[:200]!r}")
+            failed += 1
+            continue
         except urllib.error.URLError as err:
             print(f"FAIL {name}: {err}")
             failed += 1
